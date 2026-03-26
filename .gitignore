@@ -1,0 +1,23 @@
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+.env
+backend/reports/
+backend/*.docx
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.npm/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
