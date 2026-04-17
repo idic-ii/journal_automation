@@ -2,7 +2,7 @@ import React, { useRef, useEffect } from 'react';
 
 export default function Sidebar({
   form, handleFormChange, phase,
-  startCollect, generateDocx,
+  startCollect, stopCollect, generateDocx,
   reportId, error, logs,
 }) {
   const timelineRef = useRef(null);
@@ -63,6 +63,15 @@ export default function Sidebar({
           <button type="submit" className="btn-collect" disabled={phase === 'collecting' || phase === 'generating'}>
             {phase === 'collecting' ? <><div className="loading-spinner" /> Recolectando…</> : 'Iniciar Recolección'}
           </button>
+
+          {phase === 'collecting' && (
+            <button type="button" onClick={stopCollect} className="btn-stop">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="5" y="5" width="14" height="14" rx="2" />
+              </svg>
+              Detener Recolección
+            </button>
+          )}
         </form>
 
         {/* ── Action Buttons ── */}

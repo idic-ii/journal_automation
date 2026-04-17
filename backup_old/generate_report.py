@@ -18,6 +18,7 @@ from io import StringIO, BytesIO
 from datetime import date
 from bs4 import BeautifulSoup
 import os
+import concurrent.futures
 
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor, Inches
@@ -601,19 +602,22 @@ def get_journal_metadata(api_key, eissn):
             "percentil": pct,
         })
 
+    src_id = entry.get("source-id", "")
+    scopus_link_fmt = f"https://www.scopus.com/sourceid/{src_id}" if src_id else scopus_link
+
     return {
         "journal":         entry.get("dc:title", "N/A"),
         "issn_print":      entry.get("prism:issn", ""),
         "eissn":           entry.get("prism:eIssn", eissn),
         "publisher":       entry.get("dc:publisher", "N/A"),
         "homepage":        homepage,
-        "scopus_link":     scopus_link,
+        "scopus_link":     scopus_link_fmt,
         "coverage_start":  entry.get("coverageStartYear", "N/A"),
         "coverage_end":    entry.get("coverageEndYear", "present"),
         "citescore_value": cs_value,
         "citescore_year":  cs_year,
         "quartiles":       quartiles_by_area,
-        "source_id":       entry.get("source-id", ""),
+        "source_id":       src_id,
     }
 
 def get_retracted_count(api_key, source_id):
@@ -629,23 +633,37 @@ def get_retracted_count(api_key, source_id):
     return 0
 
 def get_publications_by_year(api_key, source_id, start_year, end_year):
+    """
+    Obtiene el conteo de publicaciones por año en paralelo usando consultas explícitas.
+    Garantiza resultados incluso si las facetas no están disponibles.
+    """
     if not source_id: return {}
     headers = {"X-ELS-APIKey": api_key, "Accept": "application/json"}
-    results = {}
     url = "https://api.elsevier.com/content/search/scopus"
-    for year in range(start_year, end_year + 1):
-        params = {
-            "query": f"SOURCE-ID({source_id}) AND PUBYEAR = {year}",
-            "count": 1, "field": "dc:title"
-        }
+    
+    results = {}
+
+    def fetch_year(year):
+        query = f"SOURCE-ID({source_id}) AND PUBYEAR = {year}"
+        params = {"query": query, "count": 1, "field": "dc:title"}
         try:
             resp = requests.get(url, headers=headers, params=params, timeout=15)
             if resp.status_code == 200:
                 total = int(resp.json().get("search-results", {}).get("opensearch:totalResults", 0))
-                if total > 0:
-                    results[year] = total
-        except: pass
-        time.sleep(0.25)
+                return (year, total) if total > 0 else None
+        except:
+            pass
+        return None
+
+    years = range(start_year, end_year + 1)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(years)) as executor:
+        futures = [executor.submit(fetch_year, y) for y in years]
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            if res:
+                y, count = res
+                results[y] = count
+
     return results
 
 def get_total_documents(api_key, source_id):
@@ -675,48 +693,46 @@ COUNTRIES_TO_CHECK = [
     "Peru", "Vietnam", "Morocco", "Tunisia", "Kenya",
 ]
 
-def get_publications_by_country(api_key, issn, top_n=15):
+def get_publications_by_country(api_key, source_id, top_n=15):
     """
-    Consulta Scopus con el operador de búsqueda AFFILCOUNTRY(nombre),
-    que es el operador correcto de la API (LIMIT-TO es solo para la UI
-    de Scopus y la API lo ignora devolviendo el total sin filtrar).
-
-    Query usada: ISSN(xxxx-xxxx) AND AFFILCOUNTRY("País")
-    — análogo a cómo se filtran retractados con DOCTYPE("tb")
+    Obtiene el conteo de publicaciones por país en paralelo.
+    Usa el formato de consulta LIMIT-TO (AFFILCOUNTRY, "País") recomendado.
     """
-    if not issn:
+    if not source_id:
         return []
-
-    # Normalizar ISSN → XXXX-XXXX
-    clean = issn.replace("-", "").strip()
-    issn_fmt = f"{clean[:4]}-{clean[4:]}" if len(clean) == 8 else issn.strip()
 
     headers = {"X-ELS-APIKey": api_key, "Accept": "application/json"}
     url     = "https://api.elsevier.com/content/search/scopus"
+    
+    log(f"INFO:Consultando publicaciones por país en paralelo — SOURCE-ID {source_id} ...")
+    
     results = []
 
-    log(f"INFO:Consultando publicaciones por país — ISSN {issn_fmt} ...")
-    for country in COUNTRIES_TO_CHECK:
-        # Operador de búsqueda real de la API Scopus
-        query  = f'ISSN({issn_fmt}) AND AFFILCOUNTRY("{country}")'
+    def fetch_country(country_name):
+        # Formato de consulta sugerido por el usuario para máxima fiabilidad
+        query = f'SOURCE-ID({source_id}) AND AFFILCOUNTRY("{country_name}")'
         params = {"query": query, "count": 1, "field": "dc:title"}
         try:
-            resp = requests.get(url, headers=headers, params=params, timeout=15)
+            resp = requests.get(url, headers=headers, params=params, timeout=10)
             if resp.status_code == 200:
-                total = int(
-                    resp.json()
-                    .get("search-results", {})
-                    .get("opensearch:totalResults", 0)
-                )
+                total = int(resp.json().get("search-results", {}).get("opensearch:totalResults", 0))
                 if total > 0:
-                    results.append({"country": country, "count": total})
-                    log(f"INFO:  {country}: {total:,}")
-            elif resp.status_code == 400:
-                log(f"WARN:  {country}: query rechazada (400)")
-        except Exception as e:
-            log(f"WARN:  {country}: {e}")
-        time.sleep(0.18)
+                    return {"country": country_name, "count": total}
+        except:
+            pass
+        return None
 
+    # Usamos un pull de hilos para procesar los países en paralelo
+    # COUNTRIES_TO_CHECK tiene aprox 56 países. Con 15 hilos tomará muy poco.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        futures = [executor.submit(fetch_country, c) for c in COUNTRIES_TO_CHECK]
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            if res:
+                results.append(res)
+                log(f"INFO:  {res['country']}: {res['count']:,}")
+
+    # Ordenar y limitar
     results.sort(key=lambda x: x["count"], reverse=True)
     return results[:top_n]
 
@@ -762,42 +778,139 @@ def _init_wos_api(wos_api_key: str):
 
 def get_wos_collections(eissn: str, issn_print: str = "") -> list:
     """
-    Detecta en qué colecciones WoS está indexada la revista.
-    Método: IS={issn} AND EDN==("{code}")
+    Detecta en qué colecciones WoS está indexada la revista usando hilos para acelerar la búsqueda.
     """
     if not API_KEY_WOS:
         return []
 
-    found = []
     issn_clean = (eissn or issn_print or "").replace("-", "")
     if not issn_clean:
         return []
 
-    for edn_code, edn_name in WOS_COLLECTIONS.items():
+    found = []
+
+    def check_collection(edn_code, edn_name):
         query = f'IS={issn_clean} AND EDN==("{edn_code}")'
         try:
             resp = requests.get(
                 f"{WOS_BASE}/documents",
                 headers=WOS_HEADERS,
                 params={"q": query, "limit": 1},
-                timeout=15,
+                timeout=10,
             )
             if resp.status_code == 200:
                 total = resp.json().get("metadata", {}).get("total", 0)
                 if total > 0:
-                    found.append(edn_name)
-                    log(f"INFO:  WoS coleccion encontrada: {edn_name}")
-        except requests.RequestException:
-            continue
-        time.sleep(0.2)
+                    return edn_name
+        except:
+            pass
+        return None
+
+    # Ejecutar en paralelo (son solo 5 colecciones)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(check_collection, code, name) for code, name in WOS_COLLECTIONS.items()]
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            if res:
+                found.append(res)
+                log(f"INFO:  WoS coleccion encontrada: {res}")
 
     return found
 
 
+# Lista de categorías JCR para búsqueda bruta en WoS Starter API
+JCR_CATEGORIES = [
+    "Acoustics","Agricultural Economics & Policy","Agricultural Engineering",
+    "Agriculture Dairy & Animal Science","Agriculture Multidisciplinary",
+    "Agronomy","Allergy","Anatomy & Morphology","Andrology",
+    "Anesthesiology","Anthropology","Area Studies",
+    "Astronomy & Astrophysics","Automation & Control Systems",
+    "Behavioral Sciences","Biochemical Research Methods",
+    "Biochemistry & Molecular Biology","Biodiversity Conservation",
+    "Biology","Biophysics","Biotechnology & Applied Microbiology",
+    "Cardiac & Cardiovascular Systems","Cell Biology",
+    "Chemistry Analytical","Chemistry Applied",
+    "Chemistry Inorganic & Nuclear","Chemistry Medicinal",
+    "Chemistry Multidisciplinary","Chemistry Organic",
+    "Chemistry Physical","Clinical Neurology","Communication",
+    "Computer Science Artificial Intelligence",
+    "Computer Science Cybernetics",
+    "Computer Science Hardware & Architecture",
+    "Computer Science Information Systems",
+    "Computer Science Interdisciplinary Applications",
+    "Computer Science Software Engineering",
+    "Computer Science Theory & Methods","Construction & Building Technology",
+    "Critical Care Medicine","Crystallography","Dentistry Oral Surgery & Medicine",
+    "Dermatology & Venerereal Diseases","Developmental Biology",
+    "Ecology","Economics","Education & Educational Research",
+    "Education Scientific Disciplines","Electrochemistry",
+    "Emergency Medicine","Endocrinology & Metabolism",
+    "Energy & Fuels","Engineering Aerospace",
+    "Engineering Biomedical","Engineering Chemical",
+    "Engineering Environmental","Engineering Geological",
+    "Engineering Industrial","Engineering Manufacturing",
+    "Engineering Marine","Engineering Mechanical",
+    "Engineering Multidisciplinary","Engineering Ocean",
+    "Engineering Petroleum","Entomology","Environmental Sciences",
+    "Environmental Studies","Ergonomics","Evolutionary Biology",
+    "Fisheries","Food Science & Technology","Forestry",
+    "Gastroenterology & Hepatology","Genetics & Heredity",
+    "Geochemistry & Geophysics","Geography","Geography Physical",
+    "Geology","Geosciences Multidisciplinary","Geriatrics & Gerontology",
+    "Gerontology","Green & Sustainable Science & Technology",
+    "Health Care Sciences & Services","Health Policy & Services",
+    "Hematology","History & Philosophy of Science",
+    "Horticulture","Hospitality Leisure Sport & Tourism",
+    "Imaging Science & Photographic Technology","Immunology",
+    "Infectious Diseases","Information Science & Library Science",
+    "Instruments & Instrumentation","Integrative & Complementary Medicine",
+    "International Relations","Marine & Freshwater Biology",
+    "Materials Science Biomaterials","Materials Science Ceramics",
+    "Materials Science Characterization & Testing",
+    "Materials Science Coatings & Films","Materials Science Composites",
+    "Materials Science Multidisciplinary","Materials Science Paper & Wood",
+    "Materials Science Textiles","Mathematical & Computational Biology",
+    "Mathematics","Mathematics Applied","Mathematics Interdisciplinary Applications",
+    "Mechanics","Medical Ethics","Medical Informatics",
+    "Medical Laboratory Technology","Medicine General & Internal",
+    "Medicine Legal","Medicine Research & Experimental",
+    "Metallurgy & Metallurgical Engineering","Meteorology & Atmospheric Sciences",
+    "Microbiology","Microscopy","Mineralogy","Mining & Mineral Processing",
+    "Multidisciplinary Sciences","Mycology","Nanoscience & Nanotechnology",
+    "Neuroimaging","Neurosciences","Nuclear Science & Technology",
+    "Nursing","Nutrition & Dietetics","Obstetrics & Gynecology",
+    "Oceanography","Oncology","Operations Research & Management Science",
+    "Ophthalmology","Optics","Orthopedics","Otorhinolaryngology",
+    "Paleontology","Parasitology","Pathology","Pediatrics",
+    "Peripheral Vascular Disease","Pharmacology & Pharmacy",
+    "Physics Applied","Physics Atomic Molecular & Chemical",
+    "Physics Condensed Matter","Physics Fluids & Plasmas",
+    "Physics Mathematical","Physics Multidisciplinary",
+    "Physics Nuclear","Physics Particles & Fields",
+    "Physiology","Plant Sciences","Polymer Science",
+    "Primary Health Care","Psychiatry","Psychology",
+    "Psychology Applied","Psychology Biological",
+    "Psychology Clinical","Psychology Developmental",
+    "Psychology Educational","Psychology Experimental",
+    "Psychology Mathematical","Psychology Multidisciplinary",
+    "Psychology Social","Public Administration",
+    "Public Environmental & Occupational Health",
+    "Radiology Nuclear Medicine & Medical Imaging",
+    "Rehabilitation","Remote Sensing","Reproductive Biology",
+    "Respiratory System","Rheumatology","Robotics",
+    "Social Sciences Biomedical","Social Sciences Interdisciplinary",
+    "Social Sciences Mathematical Methods","Sociology",
+    "Soil Science","Spectroscopy","Sport Sciences",
+    "Statistics & Probability","Substance Abuse",
+    "Surgery","Telecommunications","Toxicology",
+    "Transplantation","Transportation","Tropical Medicine",
+    "Urology & Nephrology","Veterinary Sciences","Virology",
+    "Water Resources","Zoology",
+]
+
 def get_wos_categories(eissn: str, issn_print: str = "") -> list:
     """
-    Detecta las categorías JCR de la revista en WoS.
-    Método: IS={issn} AND TASCA==("{categoria}")
+    Detecta las categorías JCR de la revista en WoS buscando en paralelo.
     """
     if not API_KEY_WOS:
         return []
@@ -806,115 +919,43 @@ def get_wos_categories(eissn: str, issn_print: str = "") -> list:
     if not issn_clean:
         return []
 
-    JCR_CATEGORIES = [
-        "Acoustics","Agricultural Economics & Policy","Agricultural Engineering",
-        "Agriculture Dairy & Animal Science","Agriculture Multidisciplinary",
-        "Agronomy","Allergy","Anatomy & Morphology","Andrology",
-        "Anesthesiology","Anthropology","Area Studies",
-        "Astronomy & Astrophysics","Automation & Control Systems",
-        "Behavioral Sciences","Biochemical Research Methods",
-        "Biochemistry & Molecular Biology","Biodiversity Conservation",
-        "Biology","Biophysics","Biotechnology & Applied Microbiology",
-        "Cardiac & Cardiovascular Systems","Cell Biology",
-        "Chemistry Analytical","Chemistry Applied",
-        "Chemistry Inorganic & Nuclear","Chemistry Medicinal",
-        "Chemistry Multidisciplinary","Chemistry Organic",
-        "Chemistry Physical","Clinical Neurology","Communication",
-        "Computer Science Artificial Intelligence",
-        "Computer Science Cybernetics",
-        "Computer Science Hardware & Architecture",
-        "Computer Science Information Systems",
-        "Computer Science Interdisciplinary Applications",
-        "Computer Science Software Engineering",
-        "Computer Science Theory & Methods","Construction & Building Technology",
-        "Critical Care Medicine","Crystallography","Dentistry Oral Surgery & Medicine",
-        "Dermatology & Venerereal Diseases","Developmental Biology",
-        "Ecology","Economics","Education & Educational Research",
-        "Education Scientific Disciplines","Electrochemistry",
-        "Emergency Medicine","Endocrinology & Metabolism",
-        "Energy & Fuels","Engineering Aerospace",
-        "Engineering Biomedical","Engineering Chemical",
-        "Engineering Environmental","Engineering Geological",
-        "Engineering Industrial","Engineering Manufacturing",
-        "Engineering Marine","Engineering Mechanical",
-        "Engineering Multidisciplinary","Engineering Ocean",
-        "Engineering Petroleum","Entomology","Environmental Sciences",
-        "Environmental Studies","Ergonomics","Evolutionary Biology",
-        "Fisheries","Food Science & Technology","Forestry",
-        "Gastroenterology & Hepatology","Genetics & Heredity",
-        "Geochemistry & Geophysics","Geography","Geography Physical",
-        "Geology","Geosciences Multidisciplinary","Geriatrics & Gerontology",
-        "Gerontology","Green & Sustainable Science & Technology",
-        "Health Care Sciences & Services","Health Policy & Services",
-        "Hematology","History & Philosophy of Science",
-        "Horticulture","Hospitality Leisure Sport & Tourism",
-        "Imaging Science & Photographic Technology","Immunology",
-        "Infectious Diseases","Information Science & Library Science",
-        "Instruments & Instrumentation","Integrative & Complementary Medicine",
-        "International Relations","Marine & Freshwater Biology",
-        "Materials Science Biomaterials","Materials Science Ceramics",
-        "Materials Science Characterization & Testing",
-        "Materials Science Coatings & Films","Materials Science Composites",
-        "Materials Science Multidisciplinary","Materials Science Paper & Wood",
-        "Materials Science Textiles","Mathematical & Computational Biology",
-        "Mathematics","Mathematics Applied","Mathematics Interdisciplinary Applications",
-        "Mechanics","Medical Ethics","Medical Informatics",
-        "Medical Laboratory Technology","Medicine General & Internal",
-        "Medicine Legal","Medicine Research & Experimental",
-        "Metallurgy & Metallurgical Engineering","Meteorology & Atmospheric Sciences",
-        "Microbiology","Microscopy","Mineralogy","Mining & Mineral Processing",
-        "Multidisciplinary Sciences","Mycology","Nanoscience & Nanotechnology",
-        "Neuroimaging","Neurosciences","Nuclear Science & Technology",
-        "Nursing","Nutrition & Dietetics","Obstetrics & Gynecology",
-        "Oceanography","Oncology","Operations Research & Management Science",
-        "Ophthalmology","Optics","Orthopedics","Otorhinolaryngology",
-        "Paleontology","Parasitology","Pathology","Pediatrics",
-        "Peripheral Vascular Disease","Pharmacology & Pharmacy",
-        "Physics Applied","Physics Atomic Molecular & Chemical",
-        "Physics Condensed Matter","Physics Fluids & Plasmas",
-        "Physics Mathematical","Physics Multidisciplinary",
-        "Physics Nuclear","Physics Particles & Fields",
-        "Physiology","Plant Sciences","Polymer Science",
-        "Primary Health Care","Psychiatry","Psychology",
-        "Psychology Applied","Psychology Biological",
-        "Psychology Clinical","Psychology Developmental",
-        "Psychology Educational","Psychology Experimental",
-        "Psychology Mathematical","Psychology Multidisciplinary",
-        "Psychology Social","Public Administration",
-        "Public Environmental & Occupational Health",
-        "Radiology Nuclear Medicine & Medical Imaging",
-        "Rehabilitation","Remote Sensing","Reproductive Biology",
-        "Respiratory System","Rheumatology","Robotics",
-        "Social Sciences Biomedical","Social Sciences Interdisciplinary",
-        "Social Sciences Mathematical Methods","Sociology",
-        "Soil Science","Spectroscopy","Sport Sciences",
-        "Statistics & Probability","Substance Abuse",
-        "Surgery","Telecommunications","Toxicology",
-        "Transplantation","Transportation","Tropical Medicine",
-        "Urology & Nephrology","Veterinary Sciences","Virology",
-        "Water Resources","Zoology",
-    ]
-
     found = []
-    log(f"INFO:Buscando categorias JCR (puede tomar un momento)...")
-    for cat in JCR_CATEGORIES:
-        query = f'IS={issn_clean} AND TASCA==("{cat}")'
+    
+    def check_category(cat_name):
+        query = f'IS={issn_clean} AND TASCA==("{cat_name}")'
         try:
             resp = requests.get(
                 f"{WOS_BASE}/documents",
                 headers=WOS_HEADERS,
                 params={"q": query, "limit": 1},
-                timeout=15,
+                timeout=5,
             )
             if resp.status_code == 200:
                 total = resp.json().get("metadata", {}).get("total", 0)
                 if total > 0:
-                    found.append(cat)
-                    log(f"INFO:  Categoria JCR encontrada: {cat}")
-        except requests.RequestException:
-            continue
-        time.sleep(0.15)
+                    return cat_name
+        except:
+            pass
+        return None
 
+    log(f"INFO:Buscando categorias JCR en paralelo (mucho más rápido)...")
+    
+    # Procesamos en hilos con max_workers=10 para no saturar el API
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Enviamos los trabajos
+        future_to_cat = {executor.submit(check_category, cat): cat for cat in JCR_CATEGORIES}
+        
+        for future in concurrent.futures.as_completed(future_to_cat):
+            res = future.result()
+            if res:
+                found.append(res)
+                log(f"INFO:  Categoria JCR encontrada: {res}")
+                # Si ya encontramos 3, cancelamos el resto si es posible y salimos
+                if len(found) >= 3:
+                    # Nota: shutdown(wait=False) no cancela hilos ya en ejecución 
+                    # pero as_completed nos permite ignorar el resto.
+                    break
+                    
     return found
 
 
@@ -1492,11 +1533,93 @@ def highlight_run(run):
     rPr.append(hl)
 
 def add_caption(doc, text):
+    """Agrega nota: solo 'Nota:' en cursiva, el resto en texto normal."""
     p = doc.add_paragraph(style="Normal")
-    run = p.add_run(text)
-    run.italic = True
-    run.font.size = Pt(9)
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     p.paragraph_format.space_before = Pt(2)
+    if text.startswith("Nota:"):
+        r_nota = p.add_run("Nota:")
+        r_nota.italic = True
+        r_nota.font.size = Pt(9)
+        r_nota.font.name = "Times New Roman"
+        r_rest = p.add_run(text[len("Nota:"):])
+        r_rest.font.size = Pt(9)
+        r_rest.font.name = "Times New Roman"
+    else:
+        run = p.add_run(text)
+        run.font.size = Pt(9)
+        run.font.name = "Times New Roman"
+
+def add_hyperlink(paragraph, url, text, font_name="Times New Roman", font_size_pt=11):
+    """Agrega un hipervínculo con color RGB(0,0,255) y sin subrayado."""
+    part = paragraph.part
+    r_id = part.relate_to(
+        url,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        is_external=True,
+    )
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+    hl_run = OxmlElement("w:r")
+    rPr_hl = OxmlElement("w:rPr")
+    # Font
+    rFonts_hl = OxmlElement("w:rFonts")
+    rFonts_hl.set(qn("w:ascii"), font_name)
+    rFonts_hl.set(qn("w:hAnsi"), font_name)
+    rFonts_hl.set(qn("w:eastAsia"), font_name)
+    rFonts_hl.set(qn("w:cs"), font_name)
+    rPr_hl.append(rFonts_hl)
+    # Size
+    sz_hl = OxmlElement("w:sz")
+    sz_hl.set(qn("w:val"), str(font_size_pt * 2))  # half-points
+    rPr_hl.append(sz_hl)
+    szCs = OxmlElement("w:szCs")
+    szCs.set(qn("w:val"), str(font_size_pt * 2))
+    rPr_hl.append(szCs)
+    # Color RGB(0,0,255)
+    color_hl = OxmlElement("w:color")
+    color_hl.set(qn("w:val"), "0000FF")
+    rPr_hl.append(color_hl)
+    # Sin subrayado
+    u_hl = OxmlElement("w:u")
+    u_hl.set(qn("w:val"), "none")
+    rPr_hl.append(u_hl)
+    hl_run.append(rPr_hl)
+    hl_text = OxmlElement("w:t")
+    hl_text.set(qn("xml:space"), "preserve")
+    hl_text.text = text
+    hl_run.append(hl_text)
+    hyperlink.append(hl_run)
+    paragraph._p.append(hyperlink)
+
+def add_image_border(doc):
+    """Agrega borde de 1pt color #999999 a la última imagen insertada."""
+    last_paragraph = doc.paragraphs[-1]
+    inline_elements = last_paragraph._p.findall(
+        './/' + qn('wp:inline')
+    )
+    if not inline_elements:
+        # Try anchor
+        inline_elements = last_paragraph._p.findall(
+            './/' + qn('wp:anchor')
+        )
+    for inline in inline_elements:
+        spPr = inline.find('.//' + qn('pic:spPr'))
+        if spPr is None:
+            continue
+        # Remove existing line if present
+        existing_ln = spPr.find(qn('a:ln'))
+        if existing_ln is not None:
+            spPr.remove(existing_ln)
+        # Add 1pt solid line with #999999
+        ln = OxmlElement('a:ln')
+        ln.set('w', '12700')  # 1pt = 12700 EMU
+        solidFill = OxmlElement('a:solidFill')
+        srgbClr = OxmlElement('a:srgbClr')
+        srgbClr.set('val', '999999')
+        solidFill.append(srgbClr)
+        ln.append(solidFill)
+        spPr.append(ln)
 
 def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
                          predatory_hits, year_chart_buf, country_chart_buf,
@@ -1516,10 +1639,11 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
     style_normal.font.name = "Times New Roman"
     style_normal.font.size = Pt(11)
     style_normal.paragraph_format.line_spacing = 1.5
+    style_normal.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
     for h_level, pt_size, indent_cm, before, after in [
-        (1, 13, 0.0, 12, 6),
-        (2, 12, 0.5, 6, 4),
+        (1, 11, 0.0, 12, 6),
+        (2, 11, 0.5, 6, 4),
         (3, 11, 1.0, 3, 2)
     ]:
         try:
@@ -1532,6 +1656,7 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
             style.paragraph_format.space_before = Pt(before)
             style.paragraph_format.space_after = Pt(after)
             style.paragraph_format.line_spacing = 1.5
+            style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
             # Force all rFonts attributes at XML level to override Word theme
             rFonts = style.element.rPr.rFonts if style.element.rPr is not None else None
             if rFonts is None:
@@ -1596,8 +1721,6 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     r = p.add_run(fecha_str); r.font.size = Pt(11); r.font.name = "Times New Roman"
 
-    doc.add_paragraph()
-
     # ── Artículo de referencia (si se ingresó por Scopus ID) ─────────────────
     if meta.get("scopus_id"):
         p_hdr = doc.add_paragraph(style="Normal")
@@ -1619,8 +1742,6 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
                 r_l = p2.add_run(f"{lbl}: "); r_l.bold = True
                 p2.add_run(str(val))
 
-        doc.add_paragraph()
-
     # ── 1. Datos de la revista ──────────────────────────────────────────────
     add_heading_tnr("1. Datos de la revista", level=1)
 
@@ -1639,7 +1760,11 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
     p.paragraph_format.space_before = Pt(4)
     p.paragraph_format.space_after = Pt(2)
     r = p.add_run("1.2 Sitio web: "); r.bold = True
-    p.add_run(meta["homepage"] or "[no disponible]")
+    homepage_val = meta.get("homepage") or "[no disponible]"
+    if homepage_val.startswith("http"):
+        add_hyperlink(p, homepage_val, homepage_val)
+    else:
+        p.add_run(homepage_val)
 
     # 1.3
     p = doc.add_paragraph(style="Normal")
@@ -1649,23 +1774,31 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
     r = p.add_run("1.3 Editorial: "); r.bold = True
     p.add_run(meta["publisher"])
 
-    # 1.4 APC — MANUAL
+    # 1.4 APC — from editable or placeholder
     p = doc.add_paragraph(style="Normal")
     p.paragraph_format.left_indent = Cm(0.5)
     p.paragraph_format.space_before = Pt(4)
     p.paragraph_format.space_after = Pt(2)
     r = p.add_run("1.4 APC: "); r.bold = True
-    rv = p.add_run("[COMPLETAR: monto y moneda, o 'Sin APC']")
-    highlight_run(rv)
+    apc_val = meta.get("apc", "").strip()
+    if apc_val and not apc_val.startswith("["):
+        p.add_run(apc_val)
+    else:
+        rv = p.add_run("[COMPLETAR: monto y moneda, o 'Sin APC']")
+        highlight_run(rv)
 
-    # 1.5 Tiempo — MANUAL
+    # 1.5 Tiempo — from editable or placeholder
     p = doc.add_paragraph(style="Normal")
     p.paragraph_format.left_indent = Cm(0.5)
     p.paragraph_format.space_before = Pt(4)
     p.paragraph_format.space_after = Pt(2)
     r = p.add_run("1.5 Tiempo de publicación de artículos: "); r.bold = True
-    rv = p.add_run("[COMPLETAR: días promedio o 'No precisa el sitio web']")
-    highlight_run(rv)
+    pt_val = meta.get("pub_time", "").strip()
+    if pt_val and not pt_val.startswith("["):
+        p.add_run(pt_val)
+    else:
+        rv = p.add_run("[COMPLETAR: días promedio o 'No precisa el sitio web']")
+        highlight_run(rv)
 
     # 1.6 CiteScore
     p = doc.add_paragraph(style="Normal")
@@ -1713,12 +1846,18 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
         # Categorias JCR primero — con espacio para cuartiles
         if wos_categories:
             for cat_name in wos_categories:
+                wos_q_map = meta.get("wos_quartiles", {})
+                q_val = wos_q_map.get(cat_name, "").strip() if isinstance(wos_q_map, dict) else ""
                 p_cat = doc.add_paragraph(style="Normal")
                 p_cat.paragraph_format.left_indent = Cm(0.5)
                 p_cat.paragraph_format.space_after = Pt(2)
                 p_cat.add_run("Se ubica en el cuartil ")
-                rv_q = p_cat.add_run("[Q?]")
-                highlight_run(rv_q)
+                if q_val and not q_val.startswith("["):
+                    r_q = p_cat.add_run(q_val)
+                    r_q.bold = True
+                else:
+                    rv_q = p_cat.add_run("[Q?]")
+                    highlight_run(rv_q)
                 p_cat.add_run(" en la categoria ")
                 r_cat = p_cat.add_run(cat_name)
                 r_cat.italic = True
@@ -1730,8 +1869,16 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
             highlight_run(rv_nc)
 
         # Colecciones al final
-        if wos_collections:
-            for col_name in wos_collections:
+        wosm = meta.get("wos_collections_manual", "").strip()
+        if wos_collections or wosm:
+            all_cols = list(wos_collections)
+            if wosm:
+                # split by comma, clean, add
+                for c in wosm.split(','):
+                    cc = c.strip()
+                    if cc and cc not in all_cols: all_cols.append(cc)
+            
+            for col_name in all_cols:
                 p_col = doc.add_paragraph(style="Normal")
                 p_col.paragraph_format.left_indent = Cm(0.5)
                 p_col.paragraph_format.space_after = Pt(2)
@@ -1764,7 +1911,7 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
     if meta.get("scopus_link"):
         p2 = doc.add_paragraph(style="Normal")
         p2.paragraph_format.left_indent = Cm(0.5)
-        p2.add_run(meta["scopus_link"])
+        add_hyperlink(p2, meta["scopus_link"], meta["scopus_link"])
 
     doc.add_paragraph()
 
@@ -1793,12 +1940,15 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
         )
 
     if year_chart_buf:
-        p_fig = doc.add_paragraph(style="Normal"); p_fig.paragraph_format.space_before = Pt(6)
+        p_fig = doc.add_paragraph(style="Normal")
+        p_fig.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        p_fig.paragraph_format.space_before = Pt(6)
         p_fig.add_run("Figura 1").bold = True
         p_fig.add_run("\n")
         p_fig.add_run("Publicaciones por año de la revista").italic = True
         doc.add_picture(year_chart_buf, width=Cm(14))
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        add_image_border(doc)
         add_caption(doc, "Nota: Elaborado a partir de datos extraídos de Scopus.")
 
     doc.add_paragraph()
@@ -1823,12 +1973,15 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
         highlight_run(rv)
 
     if country_chart_buf:
-        p_fig2 = doc.add_paragraph(style="Normal"); p_fig2.paragraph_format.space_before = Pt(6)
+        p_fig2 = doc.add_paragraph(style="Normal")
+        p_fig2.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        p_fig2.paragraph_format.space_before = Pt(6)
         p_fig2.add_run("Figura 2").bold = True
         p_fig2.add_run("\n")
         p_fig2.add_run("Publicaciones de la revista por país").italic = True
         doc.add_picture(country_chart_buf, width=Cm(14))
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        add_image_border(doc)
         add_caption(doc, "Nota: Elaborado a partir de datos extraídos de Scopus.")
     else:
         p_ph = doc.add_paragraph(style="Normal"); p_ph.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1861,8 +2014,19 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
             rtxt_wos = f"Se identificaron {retracted_wos} artículos retractados en Web of Science."
         p2.add_run(rtxt_wos)
     else:
-        rv = p2.add_run("[COMPLETAR: artículos retractados en Web of Science]")
-        highlight_run(rv)
+        wos_manual = meta.get("retracted_wos_manual", "").strip()
+        if wos_manual:
+            if wos_manual.isdigit():
+                n = int(wos_manual)
+                if n == 0:
+                    p2.add_run("No se identificaron artículos retractados en Web of Science.")
+                else:
+                    p2.add_run(f"Se identificaron {n} artículos retractados en Web of Science.")
+            else:
+                p2.add_run(wos_manual)
+        else:
+            rv = p2.add_run("[COMPLETAR: artículos retractados en Web of Science]")
+            highlight_run(rv)
 
     doc.add_paragraph()
 
@@ -1875,8 +2039,10 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
     if not predatory_hits:
         p = doc.add_paragraph(style="Normal")
         p.add_run("No figura en la lista de Predatory journals ni en Beall's List.")
-        bp1 = doc.add_paragraph(style="List Bullet"); bp1.add_run(lista1_url)
-        bp2 = doc.add_paragraph(style="List Bullet"); bp2.add_run(lista2_url)
+        bp1 = doc.add_paragraph(style="List Bullet")
+        add_hyperlink(bp1, lista1_url, lista1_url)
+        bp2 = doc.add_paragraph(style="List Bullet")
+        add_hyperlink(bp2, lista2_url, lista2_url)
     else:
         p = doc.add_paragraph(style="Normal")
         r = p.add_run("⚠ La revista figura en las siguientes listas de revistas predatorias:")
@@ -1885,8 +2051,10 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
             bp = doc.add_paragraph(style="List Bullet")
             rh = bp.add_run(hit); rh.bold = True
         p2 = doc.add_paragraph(style="Normal"); p2.add_run("Fuentes verificadas:")
-        bp1 = doc.add_paragraph(style="List Bullet"); bp1.add_run(lista1_url)
-        bp2 = doc.add_paragraph(style="List Bullet"); bp2.add_run(lista2_url)
+        bp1 = doc.add_paragraph(style="List Bullet")
+        add_hyperlink(bp1, lista1_url, lista1_url)
+        bp2 = doc.add_paragraph(style="List Bullet")
+        add_hyperlink(bp2, lista2_url, lista2_url)
 
     doc.add_paragraph()
 
@@ -1910,7 +2078,9 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
         c2 = (f"Presenta métricas CiteScore con clasificación en {best_q} "
               f"en sus categorías de mayor desempeño.")
     else:
-        c2 = "[COMPLETAR: describir desempeño en métricas]"
+        c2 = meta.get("concl_metrics", "").strip()
+        if not c2:
+            c2 = "[COMPLETAR: describir desempeño en métricas]"
 
     # 4.2
     p2 = doc.add_paragraph(style="Normal")
@@ -1947,38 +2117,8 @@ def generate_word_report(meta, pubs_by_year, total_docs, retracted_scopus,
     p51.add_run("5.1 ").bold = True
     p51.add_run("Para elecciones futuras de una revista científica, se recomienda leer el ")
 
-    # Add hyperlink for the Protocolo
-    part = doc.part
-    r_id = part.relate_to(PROTOCOLO_URL,
-                          "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
-                          is_external=True)
-    hyperlink = OxmlElement("w:hyperlink")
-    hyperlink.set(qn("r:id"), r_id)
-    hl_run = OxmlElement("w:r")
-    rPr_hl = OxmlElement("w:rPr")
-    rStyle = OxmlElement("w:rStyle")
-    rStyle.set(qn("w:val"), "Hyperlink")
-    rPr_hl.append(rStyle)
-    rFonts_hl = OxmlElement("w:rFonts")
-    rFonts_hl.set(qn("w:ascii"), "Times New Roman")
-    rFonts_hl.set(qn("w:hAnsi"), "Times New Roman")
-    rPr_hl.append(rFonts_hl)
-    sz_hl = OxmlElement("w:sz")
-    sz_hl.set(qn("w:val"), "22")  # 11pt = 22 half-points
-    rPr_hl.append(sz_hl)
-    color_hl = OxmlElement("w:color")
-    color_hl.set(qn("w:val"), "0563C1")
-    rPr_hl.append(color_hl)
-    u_hl = OxmlElement("w:u")
-    u_hl.set(qn("w:val"), "single")
-    rPr_hl.append(u_hl)
-    hl_run.append(rPr_hl)
-    hl_text = OxmlElement("w:t")
-    hl_text.set(qn("xml:space"), "preserve")
-    hl_text.text = "Protocolo para la evaluación de la idoneidad de publicaciones científicas"
-    hl_run.append(hl_text)
-    hyperlink.append(hl_run)
-    p51._p.append(hyperlink)
+    # Add hyperlink for the Protocolo using the helper
+    add_hyperlink(p51, PROTOCOLO_URL, "Protocolo para la evaluación de la idoneidad de publicaciones científicas")
 
     p51.add_run(
         ". Esta revisión permitirá comprender mejor los criterios de calidad que la "
@@ -2122,8 +2262,7 @@ if __name__ == "__main__":
 
         log("STEP:countries")
         log("INFO:Consultando publicaciones por pais...")
-        issn_for_country = meta.get("eissn") or meta.get("issn_print") or ""
-        pubs_by_country = get_publications_by_country(api_key, issn_for_country, top_n=15)
+        pubs_by_country = get_publications_by_country(api_key, meta.get("source_id"), top_n=15)
         log(f"INFO:{len(pubs_by_country)} paises con datos")
         log(f'DATA:{json.dumps({"_key": "pubs_by_country", "value": pubs_by_country}, ensure_ascii=False)}')
 
@@ -2163,9 +2302,16 @@ if __name__ == "__main__":
         pubs_by_country    = rd.get("pubs_by_country", [])
 
         # Inject editable fields from user
-        meta["apc"]              = rd.get("apc", "[COMPLETAR: monto y moneda, o 'Sin APC']")
-        meta["pub_time"]         = rd.get("pub_time", "[COMPLETAR: dias promedio o 'No precisa el sitio web']")
+        meta["apc"]              = rd.get("apc", "")
+        meta["pub_time"]         = rd.get("pub_time", "")
         meta["retracted_wos_manual"] = rd.get("retracted_wos_manual", "")
+        meta["wos_quartiles"]    = rd.get("wos_quartiles", {})
+        meta["wos_collections_manual"] = rd.get("wos_collections_manual", "")
+        meta["concl_metrics"]    = rd.get("concl_metrics", "")
+        # Override homepage if user edited it
+        homepage_edit = rd.get("homepage", "").strip()
+        if homepage_edit:
+            meta["homepage"] = homepage_edit
 
         nro_informe = params.get("nro_informe", "[COMPLETAR]")
         institucion = params.get("institucion", [

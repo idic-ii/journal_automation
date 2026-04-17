@@ -21,12 +21,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REPORT_SCRIPT = os.path.join(SCRIPT_DIR, "generate_report.py")
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+REPORT_SCRIPT = os.path.join(SCRIPT_DIR, "cli_handler.py")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "reports")
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
+
+# Stores report_id -> nro_informe for download filename
+REPORT_META = {}
 
 print(f"[Backend] Script: {REPORT_SCRIPT}")
 print(f"[Backend] Reports dir: {OUTPUT_DIR}")
@@ -50,6 +54,7 @@ class GenerateRequest(BaseModel):
 async def ws_collect(websocket: WebSocket):
     await websocket.accept()
     print("\n[WS] Client connected")
+    process = None
 
     try:
         # 1. Receive params from client
@@ -62,6 +67,7 @@ async def ws_collect(websocket: WebSocket):
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONPATH"] = ROOT_DIR
 
         process = await asyncio.get_event_loop().run_in_executor(
             None,
@@ -108,14 +114,36 @@ async def ws_collect(websocket: WebSocket):
         threading.Thread(target=reader_thread, daemon=True).start()
 
         # 4. Consume queue and send each message over WebSocket
+        async def listen_for_disconnect():
+            try:
+                while True:
+                    await websocket.receive_text()
+            except WebSocketDisconnect:
+                pass
+            except Exception:
+                pass
+
+        disconnect_task = asyncio.create_task(listen_for_disconnect())
+
         while True:
-            line = await queue.get()
+            get_task = asyncio.create_task(queue.get())
+            done, pending = await asyncio.wait(
+                [get_task, disconnect_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+
+            if disconnect_task in done:
+                get_task.cancel()
+                print("[WS] Client disconnected. Aborting collection.")
+                break
+
+            line = await get_task
             if line is None:
-                break  # subprocess finished
+                disconnect_task.cancel()
+                break
 
             print(f"[Script] {line}", flush=True)
 
-            # Build the event object (same format as before)
             try:
                 if line.startswith("DATA:"):
                     data = json.loads(line[5:])
@@ -137,6 +165,7 @@ async def ws_collect(websocket: WebSocket):
                 await websocket.send_json(msg)
             except Exception as send_err:
                 print(f"[WS] Send error: {send_err}")
+                break
 
         # 5. Check exit code
         if process.returncode != 0:
@@ -156,6 +185,16 @@ async def ws_collect(websocket: WebSocket):
         except:
             pass
     finally:
+        if process and process.poll() is None:
+            print("[WS] Terminating lingering subprocess...")
+            try:
+                process.terminate()
+                process.wait(timeout=2)
+            except:
+                try:
+                    process.kill()
+                except:
+                    pass
         try:
             await websocket.close()
         except:
@@ -184,6 +223,7 @@ async def generate_docx(request: GenerateRequest):
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONPATH"] = ROOT_DIR
 
     try:
         process = subprocess.Popen(
@@ -210,6 +250,7 @@ async def generate_docx(request: GenerateRequest):
             raise HTTPException(status_code=500, detail="Output file was not created.")
 
         print(f"[Backend] Word file created at {output_path}")
+        REPORT_META[report_id] = request.nro_informe
         return {"report_id": report_id}
 
     except HTTPException:
@@ -225,9 +266,11 @@ async def download_report(report_id: str):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Report not found")
     print(f"[Backend] Downloading report {report_id}")
+    nro = REPORT_META.get(report_id, report_id)
+    safe_nro = nro.replace('/', '-').replace('\\', '-')
     return FileResponse(
         path,
-        filename=f"Informe_Integridad_{report_id}.docx",
+        filename=f"Informe N° IDIC-IQInteg-R-{safe_nro}.docx",
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
 

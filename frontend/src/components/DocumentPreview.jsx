@@ -22,8 +22,11 @@ export default function DocumentPreview({
   // Auto-scroll to bottom when new data arrives during collection
   useEffect(() => {
     if (isCollecting && previewRef.current) {
+      const el = previewRef.current;
       setTimeout(() => {
-        previewRef.current.scrollTo({ top: previewRef.current.scrollHeight, behavior: 'smooth' });
+        if (el) {
+          el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        }
       }, 200);
     }
   }, [meta, totalDocs, pubsByYear, pubsByCountry, retractedScopus, retractedWos, wosCollections, wosCategories, predatory, isCollecting]);
@@ -91,7 +94,10 @@ export default function DocumentPreview({
           <h2>1. Datos de la revista</h2>
           <div className="indent">
             <div className="sub-item"><span className="label">1.1 ISSN:</span> {meta.issn_print || '[no disponible]'};  E-ISSN: {meta.eissn}</div>
-            <div className="sub-item"><span className="label">1.2 Sitio web:</span> {meta.homepage || '[no disponible]'}</div>
+            <div className="sub-item">
+              <span className="label">1.2 Sitio web:</span>{' '}
+              <input className="editable-field" style={{ minWidth: '250px' }} value={editables.homepage} onChange={e => updateEditable('homepage', e.target.value)} placeholder="URL del sitio web" />
+            </div>
             <div className="sub-item"><span className="label">1.3 Editorial:</span> {meta.publisher}</div>
             <div className="sub-item">
               <span className="label">1.4 APC:</span>{' '}
@@ -125,12 +131,21 @@ export default function DocumentPreview({
                 <div className="sub-item"><span className="label">1.7 Cuartil WoS (JIF {new Date().getFullYear() - 2}):</span></div>
                 {(wosCategories?.length > 0 || wosCollections?.length > 0) ? (
                   <div className="indent">
-                    {wosCategories?.map((cat, i) => (
-                      <p key={i}>Se ubica en el cuartil <input className="editable-field" style={{ width: '60px', minWidth: '60px', textAlign: 'center' }} placeholder="[Q?]" /> en la categoría <em>{cat}</em>.</p>
-                    ))}
+                    {wosCategories?.map((cat, i) => {
+                      const catName = typeof cat === 'object' ? (cat.name || '[Sin nombre]') : cat;
+                      return (
+                        <p key={i}>
+                          Se ubica en el cuartil <input className="editable-field" style={{ width: '60px', minWidth: '60px', textAlign: 'center' }} value={editables.wos_quartiles?.[catName] || ''} onChange={e => updateEditable('wos_quartiles', { ...editables.wos_quartiles, [catName]: e.target.value })} placeholder="Q?" /> en la categoría <em>{catName}</em>.
+                        </p>
+                      );
+                    })}
                     {wosCollections?.map((col, i) => (
                       <p key={i} style={{ marginTop: i === 0 ? '0.5rem' : 0 }}>Forma parte de la colección <em>{col}</em>.</p>
                     ))}
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <span className="label">Colecciones manuales:</span>{' '}
+                      <input className="editable-field" style={{ minWidth: '200px' }} value={editables.wos_collections_manual} onChange={e => updateEditable('wos_collections_manual', e.target.value)} placeholder="Ej: SCIE, SSCI" />
+                    </div>
                   </div>
                 ) : (
                   <div className="indent"><span className="editable-field" style={{ minWidth: '300px' }}>[COMPLETAR: cuartil y categoría JCR]</span></div>
@@ -142,6 +157,11 @@ export default function DocumentPreview({
             {meta.coverage_start && (
               <div className="sub-item fade-in" style={{ marginTop: '0.5rem' }}>
                 <span className="label">1.8 Vigencia en Scopus:</span> Vigente de {meta.coverage_start} a {meta.coverage_end}.
+                {meta.scopus_link && (
+                  <div style={{ marginLeft: '0.5cm', marginTop: '0.2rem' }}>
+                    <a href={meta.scopus_link} target="_blank" rel="noopener noreferrer" style={{ color: '#0000FF', textDecoration: 'none', fontSize: '0.95em' }}>{meta.scopus_link}</a>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -227,7 +247,7 @@ export default function DocumentPreview({
             <div className="sub-item"><span className="label">4.2</span>{' '}
               {meta.quartiles && Object.keys(meta.quartiles).length > 0
                 ? `Presenta métricas CiteScore con clasificación en ${Object.values(meta.quartiles).flat().map(i => i.cuartil).sort()[0] || 'N/A'} en sus categorías de mayor desempeño.`
-                : <span className="editable-field">[COMPLETAR: describir desempeño en métricas]</span>
+                : <input className="editable-field" style={{ width: '100%' }} value={editables.concl_metrics} onChange={e => updateEditable('concl_metrics', e.target.value)} placeholder="Describir desempeño en métricas" />
               }
             </div>
             <div className="sub-item"><span className="label">4.3</span>{' '}

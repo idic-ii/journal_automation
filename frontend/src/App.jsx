@@ -8,7 +8,7 @@ export default function App() {
   const {
     form, handleFormChange,
     editables, updateEditable,
-    phase, startCollect, generateDocx,
+    phase, startCollect, stopCollect, generateDocx,
     meta, totalDocs, pubsByYear, pubsByCountry,
     retractedScopus, retractedWos,
     wosCollections, wosCategories,
@@ -23,6 +23,7 @@ export default function App() {
         handleFormChange={handleFormChange}
         phase={phase}
         startCollect={startCollect}
+        stopCollect={stopCollect}
         generateDocx={generateDocx}
         reportId={reportId}
         error={error}

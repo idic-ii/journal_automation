@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import { flushSync } from 'react-dom';
 
 const API_HTTP = 'http://localhost:8000';
-const API_WS   = 'ws://localhost:8000';
+const API_WS = 'ws://localhost:8000';
 
 /**
  * Custom hook: manages data collection via WebSocket and DOCX generation via HTTP.
@@ -31,9 +31,18 @@ export default function useStreamCollect() {
 
   // ── Full bundle (received at end) ──
   const fullTaskData = useRef(null);
+  const wsRef = useRef(null);
 
   // ── Editables ──
-  const [editables, setEditables] = useState({ apc: '', pub_time: '', retracted_wos_manual: '' });
+  const [editables, setEditables] = useState({
+    apc: '',
+    pub_time: '',
+    retracted_wos_manual: '',
+    homepage: '',
+    wos_quartiles: {},
+    wos_collections_manual: '',
+    concl_metrics: ''
+  });
 
   // ── Output ──
   const [reportId, setReportId] = useState(null);
@@ -68,22 +77,27 @@ export default function useStreamCollect() {
       const data = ev.content;
       const key = data._key;
       flushSync(() => {
-        if (key === 'meta')              { setMeta(data); addLog(`Revista: ${data.journal}`, 'info'); }
-        else if (key === 'total_docs')   { setTotalDocs(data.value); }
+        if (key === 'meta') {
+          setMeta(data);
+          addLog(`Revista: ${data.journal}`, 'info');
+          // Auto-initialize homepage editable from meta
+          setEditables(prev => ({ ...prev, homepage: data.homepage || '' }));
+        }
+        else if (key === 'total_docs') { setTotalDocs(data.value); }
         else if (key === 'pubs_by_year') { setPubsByYear(data.value); }
         else if (key === 'pubs_by_country') { setPubsByCountry(data.value); }
         else if (key === 'retracted_scopus') { setRetractedScopus(data.value); }
-        else if (key === 'retracted_wos')    { setRetractedWos(data.value); }
-        else if (key === 'wos_collections')  { setWosCollections(data.value); }
-        else if (key === 'wos_categories')   { setWosCategories(data.value); }
-        else if (key === 'predatory')        { setPredatory(data.value); }
+        else if (key === 'retracted_wos') { setRetractedWos(data.value); }
+        else if (key === 'wos_collections') { setWosCollections(data.value); }
+        else if (key === 'wos_categories') { setWosCategories(data.value); }
+        else if (key === 'predatory') { setPredatory(data.value); }
       });
     }
     else if (ev.type === 'collect_done') {
       fullTaskData.current = ev.content;
     }
-    else if (ev.type === 'info')  { addLog(ev.content, 'info'); }
-    else if (ev.type === 'warn')  { addLog(ev.content, 'warn'); }
+    else if (ev.type === 'info') { addLog(ev.content, 'info'); }
+    else if (ev.type === 'warn') { addLog(ev.content, 'warn'); }
     else if (ev.type === 'error') {
       flushSync(() => { addLog(ev.content, 'error'); setError(ev.content); setPhase('input'); });
     }
@@ -109,6 +123,7 @@ export default function useStreamCollect() {
     addLog('Conectando con el servidor…', 'step');
 
     const ws = new WebSocket(`${API_WS}/ws/collect`);
+    wsRef.current = ws;
 
     ws.onopen = () => {
       console.log('[WS] Connected');
@@ -142,6 +157,7 @@ export default function useStreamCollect() {
 
     ws.onclose = (event) => {
       console.log('[WS] Closed:', event.code, event.reason);
+      wsRef.current = null;
       // If still in collecting phase (abnormal close), set to review if we have data
       setPhase(prev => {
         if (prev === 'collecting') {
@@ -152,6 +168,17 @@ export default function useStreamCollect() {
       });
     };
   }, [form, addLog, resetData, processEvent]);
+ 
+  const stopCollect = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    resetData();
+    setError(null);
+    setPhase('input');
+    addLog('Recolección detenida por el usuario.', 'warn');
+  }, [addLog, resetData]);
 
   // ═════════════════════════════════════════════════════════════════════
   //  Phase 2: Generate DOCX via HTTP POST
@@ -163,13 +190,19 @@ export default function useStreamCollect() {
     try {
       const reportData = fullTaskData.current
         ? { ...fullTaskData.current }
-        : { meta, total_docs: totalDocs, pubs_by_year: pubsByYear, pubs_by_country: pubsByCountry,
-            retracted_scopus: retractedScopus, retracted_wos: retractedWos,
-            wos_collections: wosCollections, wos_categories: wosCategories, predatory };
+        : {
+          meta, total_docs: totalDocs, pubs_by_year: pubsByYear, pubs_by_country: pubsByCountry,
+          retracted_scopus: retractedScopus, retracted_wos: retractedWos,
+          wos_collections: wosCollections, wos_categories: wosCategories, predatory
+        };
 
       reportData.apc = editables.apc;
       reportData.pub_time = editables.pub_time;
       reportData.retracted_wos_manual = editables.retracted_wos_manual;
+      reportData.wos_quartiles = editables.wos_quartiles;
+      reportData.homepage = editables.homepage;
+      reportData.wos_collections_manual = editables.wos_collections_manual;
+      reportData.concl_metrics = editables.concl_metrics;
 
       const payload = {
         api_key: form.api_key,
@@ -202,7 +235,7 @@ export default function useStreamCollect() {
   return {
     form, handleFormChange,
     editables, updateEditable,
-    phase, startCollect, generateDocx,
+    phase, startCollect, stopCollect, generateDocx,
     meta, totalDocs, pubsByYear, pubsByCountry,
     retractedScopus, retractedWos,
     wosCollections, wosCategories,
