@@ -19,14 +19,27 @@ class ReportService:
             run.font.name = "Times New Roman"
 
     def add_caption(self, doc, text):
-        """Adds a small caption for images."""
+        """Adds a small caption for images. Only 'Nota:' is italicized."""
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         p.paragraph_format.left_indent = Cm(0.5)
-        run = p.add_run(text)
-        run.font.name = "Times New Roman"
-        run.font.size = Pt(9)
-        run.italic = True
+        
+        if text.startswith("Nota:"):
+            run_n = p.add_run("Nota:")
+            run_n.font.name = "Times New Roman"
+            run_n.font.size = Pt(9)
+            run_n.italic = True
+            
+            rest = text[5:] # Length of "Nota:" is 5
+            run_r = p.add_run(rest)
+            run_r.font.name = "Times New Roman"
+            run_r.font.size = Pt(9)
+            run_r.italic = False
+        else:
+            run = p.add_run(text)
+            run.font.name = "Times New Roman"
+            run.font.size = Pt(9)
+            run.italic = False
 
     def generate_word_report(self, meta, pubs_by_year, total_docs, retracted_scopus,
                              predatory_hits, year_chart_buf, country_chart_buf,
@@ -145,13 +158,16 @@ class ReportService:
             add_subitem("1.5 Tiempo de publicación de artículos", meta.get('pub_time'), highlight_placeholder="[COMPLETAR: días promedio]")
 
             # 1.6 CiteScore
-            p = doc.add_paragraph(); p.paragraph_format.left_indent = Cm(0.5); p.paragraph_format.space_before = Pt(4)
+            p = doc.add_paragraph(); p.paragraph_format.left_indent = Cm(0.5)
+            p.paragraph_format.space_before = Pt(4); p.paragraph_format.space_after = Pt(0)
             r = p.add_run(f"1.6 Cuartil CiteScore (Scopus {meta.get('citescore_year', '2024')}):"); r.bold = True
             
             quartiles = meta.get("quartiles", {})
             if quartiles:
                 for area, items in quartiles.items():
                     p2 = doc.add_paragraph(); p2.paragraph_format.left_indent = Cm(0.5)
+                    p2.paragraph_format.space_before = Pt(0); p2.paragraph_format.space_after = Pt(0)
+                    p2.paragraph_format.line_spacing = 1.0
                     p2.add_run("De acuerdo con el área temática ")
                     ra = p2.add_run(area); ra.italic = True
                     p2.add_run(", la revista se clasifica en las siguientes categorías y cuartiles:")
@@ -172,7 +188,8 @@ class ReportService:
 
             # 1.7 WoS
             jcr_year = date.today().year - 2
-            p = doc.add_paragraph(); p.paragraph_format.left_indent = Cm(0.5); p.paragraph_format.space_before = Pt(4)
+            p = doc.add_paragraph(); p.paragraph_format.left_indent = Cm(0.5)
+            p.paragraph_format.space_before = Pt(4); p.paragraph_format.space_after = Pt(0)
             r = p.add_run(f"1.7 Cuartil WoS (JIF {jcr_year}):"); r.bold = True
             
             wos_cats = meta.get("wos_categories", [])
@@ -191,7 +208,9 @@ class ReportService:
                     # Check mapping for manual quartiles entered in frontend
                     q_val = wos_q_map.get(cat_name, "") if isinstance(wos_q_map, dict) else ""
                     if q_val and not str(q_val).startswith("["):
-                        rq = p_cat.add_run(str(q_val)); rq.bold = True
+                        q_num = str(q_val).replace('Q','')
+                        p_cat.add_run(f"{q_num} ")
+                        rq = p_cat.add_run(f"({q_val})"); rq.bold = True
                     else:
                         highlight_run(p_cat.add_run("[Q?]"))
                     p_cat.add_run(" en la categoría ")
@@ -252,8 +271,16 @@ class ReportService:
                 p_fig.add_run("Figura 1").bold = True
                 doc.add_paragraph().add_run("Publicaciones por año de la revista").italic = True
                 doc.paragraphs[-1].paragraph_format.left_indent = Cm(0.5)
-                doc.add_picture(year_chart_buf, width=Cm(14))
-                doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                # Figura 1: Chart
+                p_img_para = doc.add_picture(year_chart_buf, width=Cm(14))
+                p_img = doc.paragraphs[-1]
+                p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                # line_spacing=1.15 y space_before de 12pt mejoran la visibilidad de los bordes
+                p_img.paragraph_format.line_spacing = 1.15
+                p_img.paragraph_format.space_before = Pt(12)
+                p_img.paragraph_format.space_after = Pt(0)
+                p_img.paragraph_format.left_indent = Cm(0) 
+                
                 add_image_border(doc)
                 self.add_caption(doc, "Nota: Elaborado a partir de datos extraídos de Scopus.")
 
@@ -308,26 +335,47 @@ class ReportService:
                 p_fig2.add_run("Figura 2").bold = True
                 doc.add_paragraph().add_run("Publicaciones de la revista por país").italic = True
                 doc.paragraphs[-1].paragraph_format.left_indent = Cm(0.5)
-                doc.add_picture(country_chart_buf, width=Cm(14))
-                doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                # Figura 2: Chart
+                p_img_para2 = doc.add_picture(country_chart_buf, width=Cm(14))
+                p_img2 = doc.paragraphs[-1]
+                p_img2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                # line_spacing=1.15 y space_before de 12pt mejoran la visibilidad de los bordes
+                p_img2.paragraph_format.line_spacing = 1.15
+                p_img2.paragraph_format.space_before = Pt(12)
+                p_img2.paragraph_format.space_after = Pt(0)
+                p_img2.paragraph_format.left_indent = Cm(0)
+
                 add_image_border(doc)
                 self.add_caption(doc, "Nota: Elaborado a partir de datos extraídos de Scopus.")
 
             self.add_heading_tnr(doc, "2.3 Artículos retractados por la revista", level=2)
+            
+            # Scopus
             p = doc.add_paragraph()
             p.paragraph_format.left_indent = Cm(1.0)
             p.paragraph_format.first_line_indent = Cm(-0.5)
             p.paragraph_format.space_before = Pt(0); p.paragraph_format.space_after = Pt(0)
             rb1 = p.add_run("•  "); rb1.bold = True; rb1.font.size = Pt(14)
-            p.add_run(f"Scopus: {retracted_scopus} artículo(s) retractado(s).")
+            if retracted_scopus == 0:
+                p.add_run("No se identificaron artículos retractados en Scopus.")
+            elif retracted_scopus == 1:
+                p.add_run("Se identificó un 1 artículo retractado en Scopus.")
+            else:
+                p.add_run(f"Se identificaron {retracted_scopus} artículos retractados en Scopus.")
             
+            # Web of Science
             p2 = doc.add_paragraph()
             p2.paragraph_format.left_indent = Cm(1.0)
             p2.paragraph_format.first_line_indent = Cm(-0.5)
             p2.paragraph_format.space_before = Pt(0); p2.paragraph_format.space_after = Pt(0)
             rb2 = p2.add_run("•  "); rb2.bold = True; rb2.font.size = Pt(14)
             if retracted_wos is not None and retracted_wos >= 0:
-                p2.add_run(f"Web of Science: {retracted_wos} artículo(s) retractado(s).")
+                if retracted_wos == 0:
+                    p2.add_run("No se identificaron artículos retractados en Web of Science.")
+                elif retracted_wos == 1:
+                    p2.add_run("Se identificó un 1 artículo retractado en Web of Science.")
+                else:
+                    p2.add_run(f"Se identificaron {retracted_wos} artículos retractados en Web of Science.")
             else:
                 highlight_run(p2.add_run("[COMPLETAR: retractados en WoS]"))
 

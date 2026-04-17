@@ -86,6 +86,14 @@ def add_image_border(doc):
         inline_elements = last_paragraph._p.findall('.//' + qn('wp:anchor'))
     
     for inline in inline_elements:
+        # Asegurar que Word reserve espacio para el borde (1pt = 12700 EMUs)
+        effect_extent = inline.find(qn('wp:effectExtent'))
+        if effect_extent is not None:
+            effect_extent.set('l', '12700')
+            effect_extent.set('t', '12700')
+            effect_extent.set('r', '12700')
+            effect_extent.set('b', '12700')
+
         spPr = inline.find('.//' + qn('pic:spPr'))
         if spPr is None: continue
         ln = OxmlElement('a:ln')
