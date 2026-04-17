@@ -1,23 +1,112 @@
-# Python / Backend
+# --- Python / Backend ---
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Virtual Environments
 venv/
 env/
 .venv/
-.env
-backend/reports/
-backend/*.docx
-
-# Node / Frontend
-node_modules/
+build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Pytest / Coverage
+.pytest_cache/
+.cache/
+.hypothesis/
+.coverage
+.coverage.*
+.conan/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+
+# Configuration / Environment
+.env
+.env.production
+.env.local
+.python-version
+
+
+# --- Node / Frontend ---
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Production / Build
+dist/
+**/dist/
 dist-ssr/
 *.local
-.npm/
 
-# OS / Editor
+# Cache and Logs
+.npm/
+.eslintcache
+.stylelintcache
+node_modules/.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Other Node files
+coverage/
+.nyc_output/
+
+
+# --- Project Specific Artifacts ---
+# Ignore all generated Word reports
+*.docx
+# If you have specific folders for reports, ignore them explicitly too
+backend/reports/
+reports/
+
+
+# --- OS / Editor / IDE ---
+# Common OS files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
+
+# IDEs (VS Code, IntelliJ, etc)
 .vscode/
+!.vscode/extensions.json
 .idea/
+*.swp
+*.swo
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.user
+*.userosscache
+*.sln.docstates
