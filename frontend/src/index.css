@@ -291,6 +291,20 @@ body {
   align-items: center;
 }
 
+.discontinued-banner {
+  background: linear-gradient(135deg, #ff4b2b, #ff416c);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 12px;
+  margin-bottom: 25px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  box-shadow: 0 4px 15px rgba(255, 75, 43, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-family: 'Inter', sans-serif;
+}
+
 .doc-page {
   width: 210mm;
   max-width: 100%;

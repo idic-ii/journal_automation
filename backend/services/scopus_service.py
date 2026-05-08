@@ -3,6 +3,7 @@ import concurrent.futures
 from backend.utils.helpers import log, fmt_issn, percentile_to_quartile, get_asjc_names
 from backend.utils.constants import COUNTRIES_TO_CHECK
 from datetime import date
+import time
 
 class ScopusService:
     def __init__(self, api_key):
@@ -110,11 +111,15 @@ class ScopusService:
 
     def get_total_docs(self, source_id):
         params = {"query": f"SOURCE-ID({source_id})", "count": 1, "field": "dc:title"}
-        try:
-            resp = requests.get(self.base_url, headers=self.headers, params=params, timeout=15)
-            if resp.status_code == 200:
-                return int(resp.json().get("search-results", {}).get("opensearch:totalResults", 0))
-        except: return 0
+        for attempt in range(3):
+            try:
+                resp = requests.get(self.base_url, headers=self.headers, params=params, timeout=15)
+                if resp.status_code == 200:
+                    return int(resp.json().get("search-results", {}).get("opensearch:totalResults", 0))
+                elif resp.status_code == 429:
+                    time.sleep(2 ** (attempt + 1))
+                    continue
+            except: pass
         return 0
 
     def get_publications_by_year(self, source_id, start_year=None, end_year=None):
@@ -122,49 +127,66 @@ class ScopusService:
         if not end_year: end_year = date.today().year
         
         results = {}
+        MAX_RETRIES = 3
+
         def fetch_year(y):
             query = f"SOURCE-ID({source_id}) AND PUBYEAR = {y}"
             params = {"query": query, "count": 1, "field": "dc:title"}
-            try:
-                resp = requests.get(self.base_url, headers=self.headers, params=params, timeout=15)
-                if resp.status_code == 200:
-                    total = int(resp.json().get("search-results", {}).get("opensearch:totalResults", 0))
-                    return (y, total) if total > 0 else None
-            except: pass
-            return None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    resp = requests.get(self.base_url, headers=self.headers, params=params, timeout=20)
+                    if resp.status_code == 200:
+                        total = int(resp.json().get("search-results", {}).get("opensearch:totalResults", 0))
+                        return (y, total)
+                    elif resp.status_code == 429:
+                        wait = 2 ** (attempt + 1)
+                        log(f"WARN: Rate limited (429) for year {y}, retrying in {wait}s")
+                        time.sleep(wait)
+                        continue
+                except:
+                    time.sleep(1)
+                    continue
+            return (y, 0)
 
         years_range = range(start_year, end_year + 1)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(years_range)) as executor:
-            for y_data in filter(None, executor.map(fetch_year, years_range)):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            for y_data in executor.map(fetch_year, years_range):
                 results[str(y_data[0])] = y_data[1]
         return results
 
     def get_publications_by_country(self, source_id, top_n=15):
         def fetch_country(c):
-            # Usando un formato de query más estándar y robusto
             query = f'SOURCE-ID({source_id}) AND AFFILCOUNTRY("{c}")'
             params = {"query": query, "count": 1, "field": "dc:title"}
-            try:
-                resp = requests.get(self.base_url, headers=self.headers, params=params, timeout=10)
-                if resp.status_code == 200:
-                    total = int(resp.json().get("search-results", {}).get("opensearch:totalResults", 0))
-                    if total > 0: return {"country": c, "count": total}
-            except: pass
+            for attempt in range(3):
+                try:
+                    resp = requests.get(self.base_url, headers=self.headers, params=params, timeout=10)
+                    if resp.status_code == 200:
+                        total = int(resp.json().get("search-results", {}).get("opensearch:totalResults", 0))
+                        return {"country": c, "count": total} if total > 0 else None
+                    elif resp.status_code == 429:
+                        time.sleep(2 ** (attempt + 1))
+                        continue
+                except:
+                    time.sleep(1)
+                    continue
             return None
 
-        # Reducimos workers a 10 para evitar 429 si la API key es limitada
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             full_list = list(filter(None, executor.map(fetch_country, COUNTRIES_TO_CHECK)))
         
         full_list.sort(key=lambda x: x["count"], reverse=True)
         return full_list[:top_n]
 
     def get_retracted_count(self, source_id):
-        # DOCTYPE("tb") es el código de Scopus para Retraction
         params = {"query": f'SOURCE-ID({source_id}) AND DOCTYPE("tb")', "count": 1, "field": "dc:title"}
-        try:
-            resp = requests.get(self.base_url, headers=self.headers, params=params, timeout=15)
-            if resp.status_code == 200:
-                return int(resp.json().get("search-results", {}).get("opensearch:totalResults", 0))
-        except: return 0
+        for attempt in range(3):
+            try:
+                resp = requests.get(self.base_url, headers=self.headers, params=params, timeout=15)
+                if resp.status_code == 200:
+                    return int(resp.json().get("search-results", {}).get("opensearch:totalResults", 0))
+                elif resp.status_code == 429:
+                    time.sleep(2 ** (attempt + 1))
+                    continue
+            except: pass
         return 0

@@ -28,6 +28,7 @@ export default function useStreamCollect() {
   const [wosCollections, setWosCollections] = useState(null);
   const [wosCategories, setWosCategories] = useState(null);
   const [predatory, setPredatory] = useState(null);
+  const [discontinued, setDiscontinued] = useState(null);
 
   // ── Full bundle (received at end) ──
   const fullTaskData = useRef(null);
@@ -65,7 +66,7 @@ export default function useStreamCollect() {
   const resetData = useCallback(() => {
     setMeta(null); setTotalDocs(null); setPubsByYear(null); setPubsByCountry(null);
     setRetractedScopus(null); setRetractedWos(null); setWosCollections(null);
-    setWosCategories(null); setPredatory(null); fullTaskData.current = null;
+    setWosCategories(null); setPredatory(null); setDiscontinued(null); fullTaskData.current = null;
   }, []);
 
   // ── Process a single WS event ──
@@ -91,6 +92,7 @@ export default function useStreamCollect() {
         else if (key === 'wos_collections') { setWosCollections(data.value); }
         else if (key === 'wos_categories') { setWosCategories(data.value); }
         else if (key === 'predatory') { setPredatory(data.value); }
+        else if (key === 'discontinued') { setDiscontinued(data.value); }
       });
     }
     else if (ev.type === 'collect_done') {
@@ -193,7 +195,7 @@ export default function useStreamCollect() {
         : {
           meta, total_docs: totalDocs, pubs_by_year: pubsByYear, pubs_by_country: pubsByCountry,
           retracted_scopus: retractedScopus, retracted_wos: retractedWos,
-          wos_collections: wosCollections, wos_categories: wosCategories, predatory
+          wos_collections: wosCollections, wos_categories: wosCategories, predatory, discontinued
         };
 
       reportData.apc = editables.apc;
@@ -240,6 +242,7 @@ export default function useStreamCollect() {
     retractedScopus, retractedWos,
     wosCollections, wosCategories,
     predatory,
+    discontinued,
     reportId, error, logs,
   };
 }

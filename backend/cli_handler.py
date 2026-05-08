@@ -47,6 +47,12 @@ def handle_collect(params):
     hits = integrity.check_predatory(meta["journal"], meta["publisher"])
     log(f"DATA:{json.dumps({'_key': 'predatory', 'value': hits})}")
 
+    # 4.1 Discontinued Check
+    log("STEP:discontinued")
+    disc_data = integrity.check_discontinued(meta.get("issn_print"), meta.get("eissn"))
+    if disc_data:
+        log(f"DATA:{json.dumps({'_key': 'discontinued', 'value': disc_data})}")
+
     # 5. Production by Year
     log("STEP:pubs_by_year")
     pubs_year = scopus.get_publications_by_year(meta["source_id"])
@@ -78,7 +84,7 @@ def handle_generate(params):
     # Merge all editable and collected fields into meta for ReportService
     # This ensures wos_categories, wos_collections, predatory, etc. are reachable inside meta
     for key in ["wos_collections", "wos_categories", "wos_quartiles", "wos_collections_manual", 
-                "apc", "pub_time", "retracted_wos", "retracted_wos_manual", "concl_metrics", "predatory"]:
+                "apc", "pub_time", "retracted_wos", "retracted_wos_manual", "concl_metrics", "predatory", "discontinued"]:
         if key in report_data:
             meta[key] = report_data[key]
         elif key not in meta and key in report_data: # Just in case

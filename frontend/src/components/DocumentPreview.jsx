@@ -12,7 +12,7 @@ export default function DocumentPreview({
   phase, form,
   meta, totalDocs, pubsByYear, pubsByCountry,
   retractedScopus, retractedWos,
-  wosCollections, wosCategories, predatory,
+  wosCollections, wosCategories, predatory, discontinued,
   editables, updateEditable,
 }) {
   const previewRef = useRef(null);
@@ -63,6 +63,21 @@ export default function DocumentPreview({
   return (
     <main className="preview-area" ref={previewRef}>
       <div className="doc-page">
+        {/* ── ALERTA DESCONTINUADA ── */}
+        {discontinued?.is_discontinued && (
+          <div className="discontinued-banner fade-in">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+              <line x1="12" y1="9" x2="12" y2="13"></line>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+            <div>
+              <strong>REVISTA DESCONTINUADA:</strong> Esta revista figura como inactiva en Scopus.
+              <span style={{ marginLeft: '10px', fontSize: '0.9em', opacity: 0.9 }}>Cobertura: {discontinued.coverage}</span>
+            </div>
+          </div>
+        )}
+
         {/* ── HEADER ── */}
         <div className="doc-header fade-in">
           <p>Área de Inteligencia e Integridad</p>
@@ -157,6 +172,16 @@ export default function DocumentPreview({
             {meta.coverage_start && (
               <div className="sub-item fade-in" style={{ marginTop: '0.5rem' }}>
                 <span className="label">1.8 Vigencia en Scopus:</span> Vigente de {meta.coverage_start} a {meta.coverage_end}.
+                {discontinued?.is_discontinued && (
+                  <span style={{ color: '#c00', fontWeight: 700, marginLeft: '0.4rem' }}>
+                    (cobertura descontinuada en Scopus)
+                  </span>
+                )}
+                {discontinued?.is_discontinued && (
+                  <div style={{ color: '#c00', fontWeight: 700, marginTop: '0.2rem' }}>
+                    ⚠ REVISTA DESCONTINUADA (Cobertura: {discontinued.coverage})
+                  </div>
+                )}
                 {meta.scopus_link && (
                   <div style={{ marginLeft: '0.5cm', marginTop: '0.2rem' }}>
                     <a href={meta.scopus_link} target="_blank" rel="noopener noreferrer" style={{ color: '#0000FF', textDecoration: 'none', fontSize: '0.95em' }}>{meta.scopus_link}</a>

@@ -239,6 +239,16 @@ class ReportService:
             r = p.add_run("1.8 Vigencia en Scopus: "); r.bold = True
             p.add_run(f"Revista vigente en Scopus de {meta.get('coverage_start')} a {meta.get('coverage_end') or 'presente'}.")
             
+            # Alerta Revista Descontinuada
+            disc = meta.get("discontinued")
+            if disc and isinstance(disc, dict) and disc.get("is_discontinued"):
+                # Texto al costado (sin negrita ni rojo)
+                p.add_run(" (cobertura descontinuada en Scopus)")
+                
+                p_disc = doc.add_paragraph(); p_disc.paragraph_format.left_indent = Cm(0.5)
+                r_disc = p_disc.add_run(f"⚠ ALERTA: Esta revista figura como DESCONTINUADA en Scopus. Cobertura: {disc.get('coverage', 'n/a')}."); r_disc.bold = True
+                highlight_run(r_disc)
+            
             sid = meta.get("source_id")
             if sid:
                 sc_link = f"https://www.scopus.com/sourceid/{sid}"
@@ -389,17 +399,44 @@ class ReportService:
                 p = doc.add_paragraph(); p.paragraph_format.left_indent = Cm(0.5)
                 p.add_run("No figura en la lista de Predatory journals ni en Beall's List.")
             else:
-                p = doc.add_paragraph(); p.paragraph_format.left_indent = Cm(0.5)
-                r = p.add_run("⚠ La revista figura en listas de revistas predatorias:"); r.bold = True; r.font.color.rgb = RGBColor(192, 0, 0)
+                # Agrupar hits por categoría (Revista vs Editorial) y Fuente (Lista 1 vs Lista 2)
+                j_sources = []
+                p_sources = []
+                
                 for hit in predatory_hits:
-                    ph = doc.add_paragraph()
-                    ph.paragraph_format.left_indent = Cm(1.0)
-                    ph.paragraph_format.first_line_indent = Cm(-0.5)
-                    ph.paragraph_format.space_before = Pt(0); ph.paragraph_format.space_after = Pt(0)
-                    rb = ph.add_run("•  "); rb.bold = True; rb.font.size = Pt(14)
-                    ph.add_run(str(hit))
-                p2 = doc.add_paragraph(); p2.paragraph_format.left_indent = Cm(0.5)
-                p2.add_run("Fuentes verificadas:")
+                    source_name = ""
+                    if "Lista 1" in hit: source_name = "Predatory Journals"
+                    elif "Lista 2" in hit: source_name = "Beall's List"
+                    
+                    if hit.startswith("Revista"):
+                        if source_name and source_name not in j_sources: j_sources.append(source_name)
+                    elif hit.startswith("Editorial"):
+                        if source_name and source_name not in p_sources: p_sources.append(source_name)
+
+                # --- Lógica de Redacción Estilizada ---
+                def get_src_str(sources):
+                    if not sources: return ""
+                    plural = "s" if len(sources) > 1 else ""
+                    return f"lista{plural} de {' y '.join(sources)}"
+
+                sentence = ""
+                if j_sources and p_sources:
+                    if set(j_sources) == set(p_sources):
+                        # Escenario: Ambas en lo mismo
+                        sentence = f"La revista y su editorial figuran en la {get_src_str(j_sources)}."
+                    else:
+                        # Escenario: Coincidencia Mixta
+                        txt_j = get_src_str(j_sources)
+                        txt_p = get_src_str(p_sources).replace("listas de ", "").replace("lista de ", "")
+                        sentence = f"La revista figura en la {txt_j}, y su editorial en la de {txt_p}."
+                elif j_sources:
+                    sentence = f"La revista figura en la {get_src_str(j_sources)}."
+                elif p_sources:
+                    sentence = f"El editorial de la revista figura en la {get_src_str(p_sources)}."
+
+                if sentence:
+                    p = doc.add_paragraph(); p.paragraph_format.left_indent = Cm(0.5)
+                    r = p.add_run(sentence); r.bold = True
 
             bp1 = doc.add_paragraph()
             bp1.paragraph_format.left_indent = Cm(1.0)
@@ -432,6 +469,12 @@ class ReportService:
                 p3.add_run("No presenta indicios de malas prácticas (no figura en listas predatorias).")
             else:
                 r = p3.add_run("Figura en listas de revistas predatorias. Se recomienda cautela."); r.font.color.rgb = RGBColor(192, 0, 0)
+
+            # 4.4 Discontinued Conclusion
+            disc = meta.get("discontinued")
+            if disc and isinstance(disc, dict) and disc.get("is_discontinued"):
+                p4 = doc.add_paragraph(); p4.paragraph_format.left_indent = Cm(0.5); p4.add_run("4.4 ").bold = True
+                r4 = p4.add_run("La revista figura como DESCONTINUADA por Scopus. Se recomienda verificar la idoneidad de la publicación."); r4.font.color.rgb = RGBColor(192, 0, 0); r4.bold = True
 
             # ── 5. Recomendaciones ───────────────────────────────────────────────
             self.add_heading_tnr(doc, "5. Recomendaciones", level=1)

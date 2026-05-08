@@ -13,6 +13,7 @@ export default function App() {
     retractedScopus, retractedWos,
     wosCollections, wosCategories,
     predatory,
+    discontinued,
     reportId, error, logs,
   } = useStreamCollect();
 
@@ -41,6 +42,7 @@ export default function App() {
         wosCollections={wosCollections}
         wosCategories={wosCategories}
         predatory={predatory}
+        discontinued={discontinued}
         editables={editables}
         updateEditable={updateEditable}
       />
