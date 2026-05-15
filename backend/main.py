@@ -88,7 +88,10 @@ async def ws_collect(websocket: WebSocket):
         # 3. Read stdout line by line and send each as a WS message
         def read_lines(proc):
             """Generator that yields lines from subprocess stdout."""
-            for raw_line in proc.stdout:
+            while True:
+                raw_line = proc.stdout.readline()
+                if not raw_line:
+                    break
                 try:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                 except:

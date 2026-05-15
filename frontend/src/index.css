@@ -373,6 +373,10 @@ body {
 .sub-item {
   margin-left: 0.5cm;
   margin-bottom: 0.4rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
 .sub-item .label { font-weight: 700; }
@@ -417,6 +421,13 @@ body {
   border-style: solid;
   background: #FFFDE7;
   box-shadow: 0 0 0 3px rgba(255, 213, 79, 0.25);
+}
+
+.static-field {
+  color: #111;
+  font-weight: 500;
+  padding: 2px 0;
+  display: inline-block;
 }
 
 /* ── STATUS & EMPTY ────────────────────────────────────────────────── */
@@ -520,6 +531,48 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #C4C4C4; border-radius: 10px; }
 ::-webkit-scrollbar-thumb:hover { background: #999; }
+
+/* ── RETRACTION TOOLTIPS ────────────────────────────────────────── */
+.retraction-badge-container:hover .retraction-badge {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(192, 0, 0, 0.12);
+  border-color: #c00000;
+}
+
+.retraction-tooltip {
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%) translateY(10px);
+  width: 280px;
+  background: #1e293b;
+  color: #f8fafc;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+  opacity: 0;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 100;
+}
+
+.retraction-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -6px;
+  border-width: 6px;
+  border-style: solid;
+  border-color: #1e293b transparent transparent transparent;
+}
+
+.retraction-badge-container:hover .retraction-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
 
 /* ── RESPONSIVE ────────────────────────────────────────────────────── */
 @media (max-width: 1200px) {

@@ -389,6 +389,37 @@ class ReportService:
             else:
                 highlight_run(p2.add_run("[COMPLETAR: retractados en WoS]"))
 
+            # Retraction Watch (CSV Data)
+            rw = meta.get("retracted_watch")
+            if rw and rw.get("count", 0) > 0:
+                p3 = doc.add_paragraph()
+                p3.paragraph_format.left_indent = Cm(1.0)
+                p3.paragraph_format.first_line_indent = Cm(-0.5)
+                p3.paragraph_format.space_before = Pt(0); p3.paragraph_format.space_after = Pt(0)
+                rb3 = p3.add_run("•  "); rb3.bold = True; rb3.font.size = Pt(14)
+                p3.add_run(f"La base de datos Retraction Watch identifica {rw['count']} registros adicionales.")
+                
+                # Motivos principales
+                if rw.get("top_reasons"):
+                    p_reasons = doc.add_paragraph()
+                    p_reasons.paragraph_format.left_indent = Cm(1.5)
+                    p_reasons.add_run(f"Motivos principales: {', '.join(rw['top_reasons'])}.")
+
+                # Ejemplos (Máximo 3)
+                p_ex_title = doc.add_paragraph()
+                p_ex_title.paragraph_format.left_indent = Cm(1.5)
+                p_ex_title.add_run("Ejemplos recientes:").italic = True
+                
+                for ex in rw.get("examples", []):
+                    pe = doc.add_paragraph()
+                    pe.paragraph_format.left_indent = Cm(2.0)
+                    pe.paragraph_format.space_before = Pt(0); pe.paragraph_format.space_after = Pt(0)
+                    pe.add_run(f"- {ex['title']} ({ex['date']})").font.size = Pt(9)
+                    pe_r = doc.add_paragraph()
+                    pe_r.paragraph_format.left_indent = Cm(2.5)
+                    pe_r.paragraph_format.space_before = Pt(0); pe_r.paragraph_format.space_after = Pt(0)
+                    pe_r.add_run(f"Motivo: {ex['reasons']}").font.size = Pt(8); pe_r.italic = True
+
             # ── 3. Listas predatorias ────────────────────────────────────────────
             self.add_heading_tnr(doc, "3. Verificación de listas de revistas predatorias", level=1)
             

@@ -463,7 +463,7 @@ JCR_CATEGORIES = [
     "Psychology Clinical", "Psychology Developmental",
     "Psychology Educational", "Psychology Experimental",
     "Psychology Mathematical", "Psychology Multidisciplinary",
-    "Psychology Social", "Public Administration",
+    "Psychology Social","Political Science", "Public Administration",
     "Public Environmental & Occupational Health",
     "Radiology Nuclear Medicine & Medical Imaging",
     "Rehabilitation", "Remote Sensing", "Reproductive Biology",

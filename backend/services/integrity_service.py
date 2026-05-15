@@ -25,7 +25,11 @@ class IntegrityService:
             resp = requests.get(url, headers=HTTP_HEADERS, timeout=20)
             if resp.status_code == 200:
                 return BeautifulSoup(resp.text, "html.parser")
-        except: pass
+            log(f"WARN: {url} respondió con código {resp.status_code}")
+        except requests.exceptions.Timeout:
+            log(f"WARN: Timeout al consultar {url}")
+        except Exception as e:
+            log(f"WARN: Error al consultar {url}: {str(e)}")
         return None
 
     @staticmethod
@@ -58,7 +62,10 @@ class IntegrityService:
                 # Filtrar números puros o textos muy cortos
                 if not val or re.fullmatch(r'\d+', val) or len(val) < 4: continue
                 result[IntegrityService._normalize(val)] = val
-        except: pass
+        except requests.exceptions.Timeout:
+            log(f"WARN: Timeout al descargar Google Sheet {sheet_id}")
+        except Exception as e:
+            log(f"WARN: Error al parsear Google Sheet {sheet_id}: {str(e)}")
         return result
 
     @staticmethod
@@ -69,15 +76,21 @@ class IntegrityService:
         """
         log("INFO:Consultando listas de integridad (Beall's y Predatory Sheets)...")
         
+        sources_status = {}
+        
         # 1. Obtener listas de Beall's
         bealls_publishers = IntegrityService._parse_bealls("https://beallslist.net/")
+        sources_status["bealls_publishers"] = "ok" if bealls_publishers else "error"
         time.sleep(0.3)
         bealls_journals   = IntegrityService._parse_bealls("https://beallslist.net/standalone-journals/")
+        sources_status["bealls_journals"] = "ok" if bealls_journals else "error"
         time.sleep(0.3)
         
         # 2. Obtener listas de Google Sheets
         predatory_journals   = IntegrityService._parse_google_sheet(PREDATORY_JOURNAL_SHEET_ID)
+        sources_status["predatory_journals_sheet"] = "ok" if predatory_journals else "error"
         predatory_publishers = IntegrityService._parse_google_sheet(PREDATORY_PUBLISHER_SHEET_ID)
+        sources_status["predatory_publishers_sheet"] = "ok" if predatory_publishers else "error"
 
         found = []
         
@@ -98,7 +111,7 @@ class IntegrityService:
             if m_beall:
                 found.append(f"Editorial en Lista 2 (Beall's Publisher: {m_beall})")
         
-        return found
+        return {"hits": found, "sources_status": sources_status}
 
     @staticmethod
     def check_discontinued(issn, eissn):

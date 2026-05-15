@@ -23,12 +23,15 @@ export default function useStreamCollect() {
   const [totalDocs, setTotalDocs] = useState(null);
   const [pubsByYear, setPubsByYear] = useState(null);
   const [pubsByCountry, setPubsByCountry] = useState(null);
+  const [pubsByInstitution, setPubsByInstitution] = useState(null);
   const [retractedScopus, setRetractedScopus] = useState(null);
   const [retractedWos, setRetractedWos] = useState(null);
   const [wosCollections, setWosCollections] = useState(null);
   const [wosCategories, setWosCategories] = useState(null);
   const [predatory, setPredatory] = useState(null);
   const [discontinued, setDiscontinued] = useState(null);
+  const [retractedWatch, setRetractedWatch] = useState(null);
+  const [doaj, setDoaj] = useState(null);
 
   // ── Full bundle (received at end) ──
   const fullTaskData = useRef(null);
@@ -66,7 +69,8 @@ export default function useStreamCollect() {
   const resetData = useCallback(() => {
     setMeta(null); setTotalDocs(null); setPubsByYear(null); setPubsByCountry(null);
     setRetractedScopus(null); setRetractedWos(null); setWosCollections(null);
-    setWosCategories(null); setPredatory(null); setDiscontinued(null); fullTaskData.current = null;
+    setWosCategories(null); setPredatory(null); setDiscontinued(null); 
+    setRetractedWatch(null); setDoaj(null); fullTaskData.current = null;
   }, []);
 
   // ── Process a single WS event ──
@@ -87,12 +91,27 @@ export default function useStreamCollect() {
         else if (key === 'total_docs') { setTotalDocs(data.value); }
         else if (key === 'pubs_by_year') { setPubsByYear(data.value); }
         else if (key === 'pubs_by_country') { setPubsByCountry(data.value); }
+        else if (key === 'pubs_by_institution') { setPubsByInstitution(data.value); }
         else if (key === 'retracted_scopus') { setRetractedScopus(data.value); }
         else if (key === 'retracted_wos') { setRetractedWos(data.value); }
         else if (key === 'wos_collections') { setWosCollections(data.value); }
         else if (key === 'wos_categories') { setWosCategories(data.value); }
         else if (key === 'predatory') { setPredatory(data.value); }
         else if (key === 'discontinued') { setDiscontinued(data.value); }
+        else if (key === 'retracted_watch') { setRetractedWatch(data.value); }
+        else if (key === 'doaj') { 
+          setDoaj(data.value); 
+          // Auto-fill editables if DOAJ has data
+          if (data.value && data.value.in_doaj) {
+            setEditables(prev => ({
+              ...prev,
+              homepage: prev.homepage || data.value.journal_url || "",
+              apc: prev.apc || data.value.apc || "",
+              pub_time: prev.pub_time || (data.value.pub_time_weeks ? `${data.value.pub_time_weeks} semanas` : "")
+            }));
+          }
+        }
+        else if (key === 'retraction_watch_loading') { addLog('Cargando base de datos Retraction Watch...', 'info'); }
       });
     }
     else if (ev.type === 'collect_done') {
@@ -195,7 +214,8 @@ export default function useStreamCollect() {
         : {
           meta, total_docs: totalDocs, pubs_by_year: pubsByYear, pubs_by_country: pubsByCountry,
           retracted_scopus: retractedScopus, retracted_wos: retractedWos,
-          wos_collections: wosCollections, wos_categories: wosCategories, predatory, discontinued
+          wos_collections: wosCollections, wos_categories: wosCategories, 
+          predatory, discontinued, retracted_watch: retractedWatch, doaj
         };
 
       reportData.apc = editables.apc;
@@ -243,6 +263,8 @@ export default function useStreamCollect() {
     wosCollections, wosCategories,
     predatory,
     discontinued,
+    retractedWatch,
+    doaj,
     reportId, error, logs,
   };
 }

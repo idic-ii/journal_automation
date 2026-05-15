@@ -76,7 +76,7 @@ class WoSService:
         issn_val = eissn or issn_print
         if not issn_val: return -1
         
-        query = f'IS={{{issn_val}}} AND DT=="RETRACTION"'
+        query = f'IS={{{issn_val}}} AND (DT="Retraction" OR DT="Retracted Publication")'
         try:
             resp = requests.get(f"{self.base_url}/documents", headers=self.headers, params={"q": query, "limit": 1}, timeout=15)
             if resp.status_code == 200:

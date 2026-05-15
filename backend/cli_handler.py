@@ -8,6 +8,8 @@ from backend.services.wos_service import WoSService
 from backend.services.integrity_service import IntegrityService
 from backend.services.chart_service import ChartService
 from backend.services.report_service import ReportService
+from backend.services.retraction_service import RetractionService
+from backend.services.doaj_service import DoajService
 from backend.utils.helpers import log
 
 def handle_collect(params):
@@ -23,7 +25,6 @@ def handle_collect(params):
     log("STEP:metadata")
     meta = scopus.get_journal_metadata(eissn or issn_print)
     if not meta:
-        # Try with the other ISSN if available
         meta = scopus.get_journal_metadata(issn_print or eissn)
     
     if not meta:
@@ -53,6 +54,18 @@ def handle_collect(params):
     if disc_data:
         log(f"DATA:{json.dumps({'_key': 'discontinued', 'value': disc_data})}")
 
+    # 4.2 Retraction Watch (Para Previsualización)
+    log("STEP:retracted_watch")
+    rw_data = RetractionService.check_retractions(meta["journal"])
+    if rw_data:
+        log(f"DATA:{json.dumps({'_key': 'retracted_watch', 'value': rw_data})}")
+
+    # 4.3 DOAJ (Para Previsualización)
+    log("STEP:doaj")
+    doaj_data = DoajService.check_journal(issn=meta.get("issn_print"), eissn=meta.get("eissn"))
+    if doaj_data:
+        log(f"DATA:{json.dumps({'_key': 'doaj', 'value': doaj_data})}")
+
     # 5. Production by Year
     log("STEP:pubs_by_year")
     pubs_year = scopus.get_publications_by_year(meta["source_id"])
@@ -62,6 +75,14 @@ def handle_collect(params):
     log("STEP:pubs_by_country")
     pubs_country = scopus.get_publications_by_country(meta["source_id"])
     log(f"DATA:{json.dumps({'_key': 'pubs_by_country', 'value': pubs_country})}")
+
+    # 6.1 Production by Institution (Para Previsualización)
+    try:
+        log("STEP:pubs_by_institution")
+        pubs_inst = scopus.get_publications_by_institution(meta["source_id"])
+        log(f"DATA:{json.dumps({'_key': 'pubs_by_institution', 'value': pubs_inst})}")
+    except:
+        pass
 
     # 7. WoS Data
     log("STEP:wos_data")
@@ -82,12 +103,11 @@ def handle_generate(params):
     meta = report_data.get("meta", {}).copy() # Use copy to avoid side effects
     
     # Merge all editable and collected fields into meta for ReportService
-    # This ensures wos_categories, wos_collections, predatory, etc. are reachable inside meta
     for key in ["wos_collections", "wos_categories", "wos_quartiles", "wos_collections_manual", 
                 "apc", "pub_time", "retracted_wos", "retracted_wos_manual", "concl_metrics", "predatory", "discontinued"]:
         if key in report_data:
             meta[key] = report_data[key]
-        elif key not in meta and key in report_data: # Just in case
+        elif key not in meta and key in report_data:
             meta[key] = report_data[key]
 
     # Special case for homepage override
@@ -106,7 +126,6 @@ def handle_generate(params):
         
     safe_name = "".join(x for x in meta.get("journal", "report") if x.isalnum() or x in " -_").strip()
     filename = f"Informe_{safe_name}.docx"
-    # Use output_file if provided by main.py, otherwise fallback to default
     output_path = params.get("output_file") or os.path.join(output_dir, filename)
     
     # Generate Word
@@ -143,7 +162,6 @@ if __name__ == "__main__":
     if mode == "collect":
         handle_collect(params)
     elif mode == "generate":
-        # Log for debugging path issues
         if params.get("output_file"):
             log(f"INFO:Generando reporte en ruta específica: {params.get('output_file')}")
         handle_generate(params)

@@ -66,14 +66,35 @@ class ScopusService:
         cs_year_list = cs_block.get("citeScoreYearInfo", [])
         if isinstance(cs_year_list, dict): cs_year_list = [cs_year_list]
         
+        history = []
         target = None
         for y in cs_year_list:
-            if y.get("@year") == cs_year and y.get("@status") == "Complete":
-                target = y; break
-        if not target:
+            y_val = y.get("@year")
+            y_status = y.get("@status")
+            
+            # Extraer el valor del CiteScore de la estructura compleja
+            try:
+                score = y["citeScoreInformationList"][0]["citeScoreInfo"][0]["citeScore"]
+            except:
+                score = None
+                
+            if y_status == "Complete" and score:
+                history.append({"year": y_val, "score": float(score)})
+            
+            # Mantener la lógica original para el target (cuartiles actuales)
+            if y_val == cs_year and y_status == "Complete":
+                target = y
+        
+        # Fallback para target si no coincide el año exacto
+        if not target and history:
+            # Buscar el año más reciente en el historial
+            history_sorted = sorted(history, key=lambda x: x["year"], reverse=True)
             for y in cs_year_list:
-                if y.get("@status") == "Complete":
+                if y.get("@year") == str(history_sorted[0]["year"]):
                     target = y; break
+        
+        # Ordenar historial por año ascendente para el gráfico
+        history.sort(key=lambda x: x["year"])
 
         subject_ranks = []
         if target:
@@ -94,6 +115,11 @@ class ScopusService:
                 "percentil": pct,
             })
 
+        # Open Access info
+        oa_flag = entry.get("openaccess", None)
+        oa_type = entry.get("openaccessType", "")
+        is_oa = str(oa_flag) == "1" if oa_flag is not None else None
+
         return {
             "journal":         entry.get("dc:title", "N/A"),
             "issn_print":      entry.get("prism:issn", ""),
@@ -106,7 +132,10 @@ class ScopusService:
             "citescore_value": cs_value,
             "citescore_year":  cs_year,
             "source_id":       entry.get("source-id", ""),
-            "quartiles":       quartiles_by_area
+            "quartiles":       quartiles_by_area,
+            "citescore_history": history,
+            "open_access":     is_oa,
+            "oa_type":         oa_type
         }
 
     def get_total_docs(self, source_id):
@@ -153,6 +182,27 @@ class ScopusService:
             for y_data in executor.map(fetch_year, years_range):
                 results[str(y_data[0])] = y_data[1]
         return results
+
+    def get_publications_by_institution(self, source_id, top_n=10):
+        """Obtiene las instituciones con más publicaciones usando facets."""
+        query = f"SOURCE-ID({source_id})"
+        params = {
+            "query": query,
+            "count": 0,
+            "facets": f"affilname(count={top_n})"
+        }
+        try:
+            resp = requests.get(self.base_url, headers=self.headers, params=params, timeout=15)
+            if resp.status_code == 200:
+                facet_list = resp.json().get("search-results", {}).get("facet", [])
+                for f in facet_list:
+                    if f.get("@att") == "affilname":
+                        categories = f.get("category", [])
+                        if isinstance(categories, dict): categories = [categories]
+                        return [{"institution": c.get("label"), "count": int(c.get("count", 0))} for c in categories]
+        except Exception as e:
+            log(f"ERROR: Fallo al obtener instituciones: {str(e)}")
+        return []
 
     def get_publications_by_country(self, source_id, top_n=15):
         def fetch_country(c):

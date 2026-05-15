@@ -9,11 +9,13 @@ export default function App() {
     form, handleFormChange,
     editables, updateEditable,
     phase, startCollect, stopCollect, generateDocx,
-    meta, totalDocs, pubsByYear, pubsByCountry,
+    meta, totalDocs, pubsByYear, pubsByCountry, pubsByInstitution,
     retractedScopus, retractedWos,
     wosCollections, wosCategories,
     predatory,
     discontinued,
+    retractedWatch,
+    doaj,
     reportId, error, logs,
   } = useStreamCollect();
 
@@ -37,12 +39,15 @@ export default function App() {
         totalDocs={totalDocs}
         pubsByYear={pubsByYear}
         pubsByCountry={pubsByCountry}
+        pubsByInstitution={pubsByInstitution}
         retractedScopus={retractedScopus}
         retractedWos={retractedWos}
         wosCollections={wosCollections}
         wosCategories={wosCategories}
         predatory={predatory}
         discontinued={discontinued}
+        retractedWatch={retractedWatch}
+        doaj={doaj}
         editables={editables}
         updateEditable={updateEditable}
       />
