@@ -128,6 +128,13 @@ def handle_generate(params):
     filename = f"Informe_{safe_name}.docx"
     output_path = params.get("output_file") or os.path.join(output_dir, filename)
     
+    
+    raw_predatory = report_data.get("predatory", [])
+    if isinstance(raw_predatory, dict):
+        predatory_hits = raw_predatory.get("hits", [])
+    else:
+        predatory_hits = raw_predatory
+    
     # Generate Word
     log("INFO:Construyendo documento Word...")
     report_service.generate_word_report(
@@ -135,7 +142,7 @@ def handle_generate(params):
         pubs_by_year=report_data.get("pubs_by_year", {}),
         total_docs=report_data.get("total_docs", 0),
         retracted_scopus=report_data.get("retracted_scopus", 0),
-        predatory_hits=report_data.get("predatory", []),
+        predatory_hits=predatory_hits,
         year_chart_buf=year_chart,
         country_chart_buf=country_chart,
         pubs_by_country=report_data.get("pubs_by_country", []),
